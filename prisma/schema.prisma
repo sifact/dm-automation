@@ -1,0 +1,215 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  // output   = "./generated/client"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String         @id @default(uuid())
+  clerkId      String         @unique
+  email        String         @unique
+  firstname    String?        @unique
+  lastname     String?        @unique
+  createdAt    DateTime       @default(now())
+  subscription Subscription?
+  integrations Integrations[]
+  automations  Automation[]
+  flows        Flow[]         // Add this relation
+}
+
+model Subscription {
+  id         String            @id @default(uuid())
+  User       User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String?           @unique
+  createdAt  DateTime          @default(now())
+  plan       SUBSCRIPTION_PLAN @default(FREE)
+  updatedAt  DateTime          @default(now())
+  customerId String?           @unique
+}
+
+model Integrations {
+  id         String       @id @default(uuid())
+  name       INTEGRATIONS @default(INSTAGRAM)
+  createdAt  DateTime     @default(now())
+  User       User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String?      
+  token      String       @db.Text
+  expiresAt  DateTime?
+  platformId String?      @unique
+}
+
+model Automation {
+  id        String       @id @default(uuid())
+  name      String       @default("Untitled")
+  platform  INTEGRATIONS @default(INSTAGRAM)
+  createdAt DateTime     @default(now())
+  active    Boolean      @default(false)
+  User      User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String?
+  welcomeMessage String?  @db.Text
+  defaultResponse String? @db.Text
+  dms       Dms[]
+  posts     Post[]
+  listener  Listener?
+  triggers  Trigger[]
+  keywords  Keyword[]
+
+  @@index([userId])
+}
+
+
+
+model Dms {
+  id           String      @id @default(uuid())
+  Automation   Automation? @relation(fields: [automationId], references: [id])
+  automationId String?
+  createdAt    DateTime    @default(now())
+  senderId     String?
+  reciever     String?
+  message      String?     @db.Text
+}
+
+model Post {
+  id           String      @id @default(uuid())
+  postid       String
+  caption      String?
+  media        String      @db.Text
+  mediaType    MEDIATYPE   @default(IMAGE)
+  Automation   Automation? @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  automationId String?
+}
+
+model Listener {
+  id           String     @id @default(uuid())
+  Automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  automationId String     @unique
+  listener     LISTENERS  @default(MESSAGE)
+  prompt       String     @db.Text
+  commentReply String?
+  dmCount      Int        @default(0)
+  commentCount Int        @default(0)
+}
+
+model Trigger {
+  id           String      @id @default(uuid())
+  type         String
+  Automation   Automation? @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  automationId String?     @unique
+}
+
+model Keyword {
+  id           String      @id @default(uuid())
+  word         String
+  Automation   Automation? @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  automationId String?     
+
+  @@unique([automationId, word]) //this constraints ensure user cant use the same keyword on multiple automations
+}
+
+enum SUBSCRIPTION_PLAN {
+  PRO
+  FREE
+}
+
+enum INTEGRATIONS {
+  INSTAGRAM
+  MESSENGER
+  WHATSAPP
+  FACEBOOK
+}
+
+enum MEDIATYPE {
+  IMAGE
+  VIDEO
+  CAROSEL_ALBUM
+}
+
+enum LISTENERS {
+  SMARTAI
+  MESSAGE
+}
+
+// New models for flow builder
+model Flow {
+  id          String       @id @default(uuid())
+  name        String      @default("Untitled Flow")
+  platform    INTEGRATIONS @default(MESSENGER)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  isActive    Boolean     @default(false)
+  User        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  nodes       FlowNode[]
+  edges       FlowEdge[]
+  // Track current state for each conversation
+  conversations FlowConversation[]
+
+  @@index([userId])
+}
+
+model FlowNode {
+  id        String    @id @default(uuid())
+  type      NODE_TYPE
+  content   String    @db.Text
+  positionX Float
+  positionY Float
+  data      Json?     // For storing additional node-specific data
+  Flow      Flow      @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flowId    String
+  // Edges
+  fromEdges FlowEdge[] @relation("FromNode")
+  toEdges   FlowEdge[] @relation("ToNode")
+
+  @@index([flowId])
+}
+
+model FlowEdge {
+  id           String    @id @default(uuid())
+  Flow         Flow      @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flowId       String
+  fromNode     FlowNode  @relation("FromNode", fields: [fromNodeId], references: [id], onDelete: Cascade)
+  fromNodeId   String
+  toNode       FlowNode  @relation("ToNode", fields: [toNodeId], references: [id], onDelete: Cascade)
+  toNodeId     String
+  // For button responses
+  buttonValue  String?   
+
+  @@index([flowId])
+  @@index([fromNodeId])
+  @@index([toNodeId])
+}
+
+// Track conversation state
+model FlowConversation {
+  id            String   @id @default(uuid())
+  Flow          Flow     @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flowId        String
+  platformUserId String  // ID of the user from the messaging platform
+  currentNodeId String?  // Current node in the flow
+  startedAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  isComplete    Boolean  @default(false)
+  metadata      Json?    // Store any additional conversation context
+
+  @@index([flowId])
+  @@index([platformUserId])
+}
+
+enum NODE_TYPE {
+  MESSAGE
+  BUTTON
+  START
+  END
+}
+
+
